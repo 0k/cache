@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if ! [ -f node_modules/.bin/eslint ]; then
+  npm install || exit 1 
+fi
+
+if ! [ -f .eslintrc.yml ]; then
+  .package.d/lint/eslint/install || exit 1
+fi
+
+args=("$@")
+if [ "${#args[@]}" == 0 ]; then
+  args=($(git ls-files | grep -- '.[tj]s$'))
+fi
+exec node_modules/.bin/eslint --ext .ts,.js -f unix "${args[@]}"

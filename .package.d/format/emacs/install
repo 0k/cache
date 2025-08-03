@@ -1,0 +1,12 @@
+#!/bin/bash
+
+indent=$(yq -e .indent .package.d/lint.yml) || exit 1
+
+cat <<EOF > .dir-locals.el
+;;; Directory Local Variables
+;;; For more information see (info "(emacs) Directory Variables")
+
+((typescript-mode
+   (typescript-indent-level . $indent)))
+
+EOF

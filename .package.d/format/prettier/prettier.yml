@@ -1,0 +1,6 @@
+tabWidth: {{.indent}}
+vueIndentScriptAndStyle: true
+semi: false
+spaceBeforeFunctionParen: true
+trailingComma: all
+singleQuote: true

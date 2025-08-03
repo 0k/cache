@@ -1,0 +1,41 @@
+{
+    "name": "@0k/cache",
+    "version": "%%version%%",
+    "description": "Kids cache implementation",
+    "main": "build/index.js",
+    "types": "build/index.d.ts",
+    "scripts": {
+        "prepare": "ts-patch install -s",
+        "lint": "eslint --ignore-path .gitignore --ext .js,.ts .",
+        "test": "vitest run"
+    },
+    "author": "Valentin LAB",
+    "license": "MIT",
+    "files": [
+        "build/",
+        "src/",
+        "package.json",
+        "README.md",
+        "LICENSE"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git@github.com:0k/cache.git"
+    },
+    "devDependencies": {
+        "@0k/prettier": "^0.2.1",
+        "@types/node": "^22.15.3",
+        "@typescript-eslint/eslint-plugin": "^4.29.0",
+        "@typescript-eslint/parser": "^4.29.0",
+        "eslint": "^7.32.0",
+        "eslint-config-standard": "^16.0.3",
+        "jsdom": "^26.1.0",
+        "ts-jest": "^28.0.4",
+        "ts-node": "^10.8.1",
+        "ts-patch": "^3.3.0",
+        "typedoc": "^0.28.9",
+        "typescript": "^5.9.2",
+        "vite": "^7.0.6",
+        "vitest": "^3.1.2"
+    }
+}
