@@ -2,7 +2,34 @@
 
 #+TITLE: Typescript cache decorator
 
-This packages holds a cache decorator implementation.
+This packages holds a cache decorator implementation. It draws its
+inspiration on [[https://pypi.python.org/pypi/kids.cache/][kids.cache]] a python simple yet powerful cache
+decorator.
+
+
+This implementation leverage decorator in typescript to reach same goals:
+
+- no dependencies
+- cache clearing support
+
+
+Its still in infancy and lacks:
+
+- support for normal function (only methods are cachable)
+- cache stats
+- 100% coverage
+- doc
+
+However, straying from [[https://pypi.python.org/pypi/kids.cache/][kids.cache]]:
+
+- it leverages =Proxy= javascript niceties to provide a default
+  caching mechanism that records exactly what the function to be
+  cached used in the input arguments. This allows to have precise and
+  minimal footprints when looking for cache hits.
+
+- as a consequence this part of the code is a little more ambitious
+  (bigger) than its counterpart.
+
 
 * Adding =@0k/cache= to your project
 
