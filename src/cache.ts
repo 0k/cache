@@ -4,7 +4,7 @@ import { ImprintTreeMap, NoMatchingError } from './proxyTrackMap'
 type Cached<F extends (...args: any[]) => any> = F & { clearCache(): void }
 
 type CacheStore = {
-    getValue(fn: Function, args: any[]): any
+    getValue(fn: Function, instance: any, args: any[]): any
 }
 
 type CacheOptions = {
@@ -79,7 +79,7 @@ export function makeCacheDecorator (defaultOpts?: CacheOptions) {
                         instanceCache = new CacheStore({ key: opts.key })
                         instanceCacheMap.set(instance, instanceCache)
                     }
-                    return instanceCache.getValue(originalMethod, args)
+                    return instanceCache.getValue(originalMethod, instance, args)
                 }
 
                 if (!opts.noClearCache) {
@@ -111,10 +111,10 @@ class JsonKeyCacheStore extends Map implements CacheStore {
         super()
     }
 
-    getValue (fn, args) {
+    getValue (fn, instance, args) {
         const argsKey = JSON.stringify(args)
         if (!this.has(argsKey)) {
-            let result = fn.apply(this, args)
+            let result = fn.apply(instance, args)
             this.set(argsKey, result)
             return result
         }
@@ -129,14 +129,15 @@ class ProxyCacheStore implements CacheStore {
         this.imprintTreeMap = new ImprintTreeMap()
     }
 
-    getValue (fn, args) {
+    getValue (fn, instance, args) {
         let result
+        let objectsToProxify = {instance, args}
         try {
-            result = this.imprintTreeMap.get(args)
+            result = this.imprintTreeMap.get(objectsToProxify)
         } catch (e) {
             if (e instanceof NoMatchingError) {
-                const { proxy: proxiedArgs, getTrackAndRevoke } = track(args)
-                result = fn(...proxiedArgs)
+                const { proxy: proxiedArgs, getTrackAndRevoke } = track(objectsToProxify)
+                result = fn.apply(proxiedArgs.instance, proxiedArgs.args)
                 this.imprintTreeMap.set(getTrackAndRevoke(), result)
             } else {
                 throw e
@@ -344,6 +345,43 @@ if (import.meta.vitest) {
                 )
 
                 expect(warnSpy).toHaveBeenCalledTimes(1)
+            })
+            it('should work when method is referring to "this"', () => {
+                class A {
+                    value: any
+                    constructor(value) {
+                        this.value = value
+                    }
+                    @cache
+                    compute (num: any) {
+                        console.warn(`computing... `)
+                        return this.value + num
+                    }
+                }
+                const a = new A(3)
+                expect(a.compute(2)).toBe(5)
+                expect(a.compute(2)).toBe(5)
+
+                expect(warnSpy).toHaveBeenCalledTimes(1)
+            })
+            it('should work when method is referring to "this"', () => {
+                class A {
+                    value: any
+                    constructor(value) {
+                        this.value = value
+                    }
+                    @cache
+                    compute (num: any) {
+                        console.warn(`computing... `)
+                        return this.value + num
+                    }
+                }
+                const a = new A(3)
+                expect(a.compute(2)).toBe(5)
+                a.value = 0
+                expect(a.compute(2)).toBe(2)
+
+                expect(warnSpy).toHaveBeenCalledTimes(2)
             })
         })
         describe('clearCache', () => {
