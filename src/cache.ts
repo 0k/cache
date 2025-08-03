@@ -328,7 +328,7 @@ if (import.meta.vitest) {
                     "computing... {}['x']",
                 )
             })
-            it('should work whem using basic plain old java object', () => {
+            it('should work when using basic plain old java object', () => {
                 class A {
                     @cache
                     stringify (obj: any) {
