@@ -1,0 +1,14 @@
+.env*
+node_modules
+build
+docs
+.pkg
+.dovis
+README.md
+.dir-locals.el
+coverage
+package-lock.json
+.#*
+.eslintrc.yml
+.prettierrc
+.dir-locals.json

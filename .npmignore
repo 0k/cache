@@ -1,0 +1,13 @@
+.github
+.env*
+node_modules
+docs
+coverage
+*.old
+autogen.sh
+.pkg
+.package.d
+.package
+.gitchangelog.rc
+tsconfig.json
+README.org

@@ -1,0 +1,25 @@
+#!/bin/bash
+
+
+dirname="${0%/*}"
+
+main_yml=$(cat .package.d/lint.yml) || exit 1
+eslint_yml=$(cat "$dirname"/eslint.yml) || exit 1
+
+idents=($(printf "%s" "$eslint_yml" |
+             egrep -o '\{\{.[a-z]+(-[a-z]+)*(.[a-z]+(-[a-z]+)*)*\}\}' |
+             sort -u |
+             tr -d '{}'))
+for ident in "${idents[@]}"; do
+    value=$(printf "%s" "$main_yml" | yq -e "$ident" )
+    eslint_yml=$(printf "%s" "${eslint_yml}" | sed -r "s/\{\{$ident\}\}/$value/g")
+done
+patterns=$(cat .gitignore | sed -r "s%^%- '**/%g;s%$%'%g") || exit 1
+
+{
+    printf "%s\n" "${eslint_yml}"
+    cat <<EOF
+ignorePatterns:
+$patterns
+EOF
+} > .eslintrc.yml
