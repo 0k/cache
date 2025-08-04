@@ -19,11 +19,16 @@ export function makeCacheDecorator (defaultOpts?: CacheOptions) {
     defaultOpts = defaultOpts || {}
     function cache (...args: any[]) {
         if (
-            args.length === 3 &&
-            typeof args[1] === 'string' &&
-            'value' in args[2]
+            args.length === 2 &&
+            typeof args[0] === 'function' &&
+            typeof args[1] === 'object' &&
+            'kind' in args[1]
         ) {
             return cache()(...args)
+        }
+        if (args.length > 2) {
+            console.log(args)
+            throw new Error('Unsupported use of cache decorator')
         }
         let opts: CacheOptions = args[0] || {}
         opts = { ...defaultOpts, ...opts }
@@ -31,71 +36,60 @@ export function makeCacheDecorator (defaultOpts?: CacheOptions) {
         const CacheStore = opts.cacheStore || ProxyCacheStore
         return function (
             target: any,
-            propertyKey: string,
-            descriptor: PropertyDescriptor,
+            context: any,
         ) {
+            const propertyKey = context.name
+
             // this is called per-method in a given class
 
-            const originalMethod = descriptor.value
-            delete descriptor.value
-            delete descriptor.writable
+            // we are currently executed once per class and per method. Each
+            // method needs to make their own store for each instance.
 
+            // YYYvlab: how to clear cache for this method on this instance ?
+            // YYYvlab: how to clear cache for this method on all instance ?
             const instanceCacheMap = new WeakMap<any, CacheStore>()
 
-            // Collect all caches
-            let methodCaches = allCaches.get(target.constructor.prototype)
-            if (!methodCaches) {
-                methodCaches = new Set()
-                allCaches.set(target.constructor.prototype, methodCaches)
-            }
-            if (!opts.noClearCache) methodCaches.add(instanceCacheMap)
+            let wrapped: any = function (this: any, ...args: any[]) {
 
-            // clearCaches
-            if (
-                !opts.noClearCache &&
-                !target.constructor.prototype.hasOwnProperty('clearCaches')
-            ) {
-                target.constructor.prototype.clearCaches = function () {
-                    const caches = allCaches.get(Object.getPrototypeOf(this))
-                    if (!caches) return
-                    for (const map of caches) {
-                        map.delete(this)
-                    }
+                let instanceCache = instanceCacheMap.get(this)
+                if (!instanceCache) {
+                    instanceCache = new CacheStore({ key: opts.key })
+                    instanceCacheMap.set(this, instanceCache)
                 }
+                return instanceCache.getValue(target, this, args)
             }
 
-            descriptor.get = function () {
+            context.addInitializer(function () {
                 const instance = this
-
-                if (
-                    Object.prototype.hasOwnProperty.call(instance, propertyKey)
-                ) {
-                    return instance[propertyKey]
-                }
-
-                let wrapped: any = function (this: any, ...args: any[]) {
-                    let instanceCache = instanceCacheMap.get(instance)
-                    if (!instanceCache) {
-                        instanceCache = new CacheStore({ key: opts.key })
-                        instanceCacheMap.set(instance, instanceCache)
-                    }
-                    return instanceCache.getValue(originalMethod, instance, args)
-                }
-
                 if (!opts.noClearCache) {
                     function clearCache () {
                         instanceCacheMap.delete(instance)
                     }
 
-                    wrapped.clearCache = clearCache
-                }
-                Object.defineProperty(instance, propertyKey, {
-                    value: wrapped,
-                    writable: false,
-                    configurable: false,
-                })
+                    this[propertyKey].clearCache = clearCache
 
+                    let klass = Object.getPrototypeOf(instance)
+                    let methodCaches = allCaches.get(klass)
+                    if (!methodCaches) {
+                        methodCaches = new Set()
+                        allCaches.set(klass, methodCaches)
+                    }
+                    methodCaches.add(instanceCacheMap)
+
+                    if (!instance.hasOwnProperty('clearCaches')) {
+                        instance.clearCaches = function () {
+                            if (!methodCaches) return
+                            for (const map of methodCaches) {
+                                map.delete(this)
+                            }
+                        }
+                    }
+                }
+            })
+            if (context.kind === 'method') {
                 return wrapped
+            } else {
+                throw new Error('Unsupported use of cache decorator')
             }
         }
     }

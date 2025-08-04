@@ -5,8 +5,6 @@
         "moduleResolution": "node",
         "declaration": true,
         "removeComments": false,
-        "emitDecoratorMetadata": true,
-        "experimentalDecorators": true,
         "sourceMap": true,
         "skipLibCheck": true,
         "allowUnreachableCode": false,
