@@ -66,7 +66,7 @@ export function makeCacheDecorator (defaultOpts?: CacheOptions) {
                         instanceCacheMap.delete(instance)
                     }
 
-                    this[propertyKey].clearCache = clearCache
+                    wrapped.clearCache = clearCache
 
                     let klass = Object.getPrototypeOf(instance)
                     let methodCaches = allCaches.get(klass)
@@ -87,6 +87,8 @@ export function makeCacheDecorator (defaultOpts?: CacheOptions) {
                 }
             })
             if (context.kind === 'method') {
+                return wrapped
+            } else if (context.kind === 'getter') {
                 return wrapped
             } else {
                 throw new Error('Unsupported use of cache decorator')
@@ -125,12 +127,14 @@ class ProxyCacheStore implements CacheStore {
 
     getValue (fn, instance, args) {
         let result
-        let objectsToProxify = {instance, args}
+        let objectsToProxify = { instance, args }
         try {
             result = this.imprintTreeMap.get(objectsToProxify)
         } catch (e) {
             if (e instanceof NoMatchingError) {
-                const { proxy: proxiedArgs, getTrackAndRevoke } = track(objectsToProxify)
+                const { proxy: proxiedArgs, getTrackAndRevoke } = track(
+                    objectsToProxify,
+                )
                 result = fn.apply(proxiedArgs.instance, proxiedArgs.args)
                 this.imprintTreeMap.set(getTrackAndRevoke(), result)
             } else {
@@ -153,6 +157,23 @@ if (import.meta.vitest) {
         warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     })
 
+    describe('on getter', () => {
+        it('should apply on getter directly', () => {
+            class A {
+                @cache
+                get value () {
+                    console.warn('computing...')
+                    return 2
+                }
+            }
+            const a = new A()
+            expect(a.value).toBe(2)
+            expect(a.value).toBe(2)
+
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing...')
+        })
+    })
     describe('on method', () => {
         it('should apply on method directly', () => {
             class A {
@@ -343,7 +364,7 @@ if (import.meta.vitest) {
             it('should work when method is referring to "this"', () => {
                 class A {
                     value: any
-                    constructor(value) {
+                    constructor (value) {
                         this.value = value
                     }
                     @cache
@@ -361,7 +382,7 @@ if (import.meta.vitest) {
             it('should work when method is referring to "this"', () => {
                 class A {
                     value: any
-                    constructor(value) {
+                    constructor (value) {
                         this.value = value
                     }
                     @cache
@@ -507,6 +528,24 @@ if (import.meta.vitest) {
 
                 expect(warnSpy).toHaveBeenCalledTimes(5)
             })
+            it('should clearCache on getter indirectly', () => {
+                class A {
+                    @cache
+                    get value () {
+                        console.warn('computing...')
+                        return 2
+                    }
+                }
+                const a = new A()
+                expect(a.value).toBe(2)
+                expect(a.value).toBe(2);
+                (Object.getOwnPropertyDescriptor(Object.getPrototypeOf(a), 'value').get as any).clearCache()
+                expect(a.value).toBe(2)
+
+                expect(warnSpy).toHaveBeenCalledTimes(2)
+            })
+
+
         })
 
     })
