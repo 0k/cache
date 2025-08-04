@@ -27,17 +27,17 @@ export function makeCacheDecorator (defaultOpts?: CacheOptions) {
             return cache()(...args)
         }
         if (args.length > 2) {
-            console.log(args)
+            console.log(
+                'These are the actual arguments of the cache decorator',
+                args,
+            )
             throw new Error('Unsupported use of cache decorator')
         }
         let opts: CacheOptions = args[0] || {}
         opts = { ...defaultOpts, ...opts }
 
         const CacheStore = opts.cacheStore || ProxyCacheStore
-        return function (
-            target: any,
-            context: any,
-        ) {
+        return function (target: any, context: any) {
             const propertyKey = context.name
 
             // this is called per-method in a given class
@@ -48,13 +48,34 @@ export function makeCacheDecorator (defaultOpts?: CacheOptions) {
             // YYYvlab: how to clear cache for this method on this instance ?
             // YYYvlab: how to clear cache for this method on all instance ?
             const instanceCacheMap = new WeakMap<any, CacheStore>()
+            console.log(`New instanceCacheMap for ${propertyKey}`)
 
             let wrapped: any = function (this: any, ...args: any[]) {
-
-                let instanceCache = instanceCacheMap.get(this)
+                let instanceCache
+                if (this.__tracked) {
+                    instanceCache = instanceCacheMap.get(this.__tracked)
+                } else {
+                    instanceCache = instanceCacheMap.get(this)
+                }
                 if (!instanceCache) {
+                    console.log(
+                        `New CacheStore for ${propertyKey}, this.__tracked: ${this.__tracked}, this:`,
+                        this,
+                    )
+                    // console.log(
+                    //     `  BEFORE instanceCacheMap ${propertyKey}`,
+                    //     instanceCacheMap,
+                    // )
                     instanceCache = new CacheStore({ key: opts.key })
-                    instanceCacheMap.set(this, instanceCache)
+                    if (this.__tracked) {
+                        instanceCacheMap.set(this.__tracked, instanceCache)
+                    } else {
+                        instanceCacheMap.set(this, instanceCache)
+                    }
+                    // console.log(
+                    //     `  AFTER instanceCacheMap ${propertyKey}`,
+                    //     instanceCacheMap,
+                    // )
                 }
                 return instanceCache.getValue(target, this, args)
             }
@@ -129,14 +150,27 @@ class ProxyCacheStore implements CacheStore {
         let result
         let objectsToProxify = { instance, args }
         try {
+            console.log(`Cache?     ${fn.name}(${JSON.stringify(args)})`)
+            console.log(`  TreeMap`, this.imprintTreeMap)
             result = this.imprintTreeMap.get(objectsToProxify)
+            console.log(`  HIT  ${fn.name}(${JSON.stringify(args)})`)
         } catch (e) {
             if (e instanceof NoMatchingError) {
-                const { proxy: proxiedArgs, getTrackAndRevoke } = track(
+                console.log(`  MISS ${fn.name}(${JSON.stringify(args)})`)
+                const { proxy: proxiedArgs, getTrackAndDisable } = track(
                     objectsToProxify,
                 )
+                console.log(
+                    `  Apply ${fn} ${proxiedArgs.instanceof}, ${proxiedArgs.args}`,
+                )
                 result = fn.apply(proxiedArgs.instance, proxiedArgs.args)
-                this.imprintTreeMap.set(getTrackAndRevoke(), result)
+                let t = getTrackAndDisable()
+                console.log(
+                    `    new imprint for ${fn.name}(${JSON.stringify(args)}):`,
+                )
+                console.log(JSON.stringify(t, null, 2))
+                console.log(`                obj`, result)
+                this.imprintTreeMap.set(t, result)
             } else {
                 throw e
             }
@@ -173,6 +207,43 @@ if (import.meta.vitest) {
             expect(warnSpy).toHaveBeenCalledTimes(1)
             expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing...')
         })
+
+        it('on getter, `this` should be accessible and tracked', () => {
+            class A {
+                constructor (value) {
+                    this.value = value
+                }
+                @cache
+                get x () {
+                    let result = this.value
+                    console.warn(`computing x = this.value (${result})`)
+                    return result
+                }
+            }
+
+            const a = new A(5)
+
+            expect(a.x).toBe(5) // compute
+            expect(a.x).toBe(5) // cached
+
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                1,
+                'computing x = this.value (5)',
+            )
+
+            a.value = 3
+
+            expect(a.x).toBe(3) // compute
+
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                2,
+                'computing x = this.value (3)',
+            )
+
+        })
+
     })
     describe('on method', () => {
         it('should apply on method directly', () => {
@@ -192,6 +263,61 @@ if (import.meta.vitest) {
             expect(warnSpy).toHaveBeenCalledTimes(2)
             expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing...')
             expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing...')
+        })
+        it('should work when method is referring to "this"', () => {
+            class A {
+                value: any
+                constructor (value) {
+                    this.value = value
+                }
+                @cache
+                compute (num: any) {
+                    console.warn(`computing... `)
+                    return this.value + num
+                }
+            }
+            const a = new A(3)
+            expect(a.compute(2)).toBe(5)
+            expect(a.compute(2)).toBe(5)
+
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+        })
+        it('should have `this` accessible and tracked', () => {
+            class A {
+                constructor (value) {
+                    this.value = value
+                }
+                @cache
+                getValue () {
+                    let result = this.value
+                    console.warn(
+                        `computing getValue() = this.value (${result})`,
+                    )
+                    return result
+                }
+            }
+
+            const a = new A(5)
+
+            expect(a.getValue()).toBe(5) // compute
+            expect(a.getValue()).toBe(5) // cached
+
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                1,
+                'computing getValue() = this.value (5)',
+            )
+
+            a.value = 3
+
+            expect(a.getValue()).toBe(3) // compute
+
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                2,
+                'computing getValue() = this.value (3)',
+            )
+
         })
         it('should apply on method as a function', () => {
             class A {
@@ -538,15 +664,103 @@ if (import.meta.vitest) {
                 }
                 const a = new A()
                 expect(a.value).toBe(2)
-                expect(a.value).toBe(2);
-                (Object.getOwnPropertyDescriptor(Object.getPrototypeOf(a), 'value').get as any).clearCache()
+                expect(a.value).toBe(2)
+                ;(Object.getOwnPropertyDescriptor(
+                    Object.getPrototypeOf(a),
+                    'value',
+                ).get as any).clearCache()
                 expect(a.value).toBe(2)
 
                 expect(warnSpy).toHaveBeenCalledTimes(2)
             })
+        })
+        describe('recursivity', () => {
+            it('a cached function should be able to call another cached function', () => {
+                class A {
+                    @cache
+                    compute2x (x: number) {
+                        console.warn(`computing... 2x${x}`)
+                        return 2 * x
+                    }
+                    @cache
+                    compute6x (x: number) {
+                        console.warn(`computing... 3x2x${x}`)
+                        return 3 * this.compute2x(x)
+                    }
+                }
 
+                const a = new A()
+
+                expect(a.compute6x(3)).toBe(18) // compute
+                expect(warnSpy).toHaveBeenCalledTimes(2)
+
+                expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing... 3x2x3')
+                expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing... 2x3')
+
+                ;(a as any).clearCaches()
+
+                expect(a.compute2x(3)).toBe(6) // compute
+                expect(a.compute6x(3)).toBe(18) // compute
+
+                expect(warnSpy).toHaveBeenCalledTimes(4)
+
+                expect(warnSpy).toHaveBeenNthCalledWith(3, 'computing... 2x3')
+                expect(warnSpy).toHaveBeenNthCalledWith(4, 'computing... 3x2x3')
+
+
+            })
+            it('a cached function should be able to call another cached function', () => {
+                class A {
+                    constructor (value) {
+                        this.value = value
+                    }
+                    @cache
+                    get x () {
+                        let result = this.value
+                        console.warn(`computing x = this.value (${result})`)
+                        return result
+                    }
+                    @cache
+                    get y () {
+                        let result = this.x
+                        console.warn(`computing y = this.x (${result})`)
+                        return result
+                    }
+                }
+
+                const a = new A(5)
+
+                expect(a.x).toBe(5) // compute
+                expect(a.y).toBe(5) // compute
+
+                expect(warnSpy).toHaveBeenCalledTimes(2)
+
+                expect(warnSpy).toHaveBeenNthCalledWith(
+                    1,
+                    'computing x = this.value (5)',
+                )
+                expect(warnSpy).toHaveBeenNthCalledWith(
+                    2,
+                    'computing y = this.x (5)',
+                )
+
+                a.value = 3
+
+                expect(a.y).toBe(3) // compute
+
+                expect(warnSpy).toHaveBeenCalledTimes(4)
+
+                expect(warnSpy).toHaveBeenNthCalledWith(
+                    3,
+                    'computing x = this.value (3)',
+                )
+                expect(warnSpy).toHaveBeenNthCalledWith(
+                    4,
+                    'computing y = this.x (3)',
+                )
+
+            })
 
         })
-
     })
 }

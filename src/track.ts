@@ -63,16 +63,30 @@ export function track<T extends object> (target: T) {
         read: {},
         has: {},
     })
-    const allRevokes = []
+    const allProxiesToDisable = []
 
     const makeProxy = (obj: any, node: TrackImprint): any => {
         // reuse the proxy bound to this node (not to the object)
         const cached = nodeToProxy.get(node as any)
         if (cached) return cached
+        const state = { active: true }
+        let tracked = obj
+        if (obj.__tracked) {
+            console.log(`Already tracked by someone else`)
+            // We need a stable ref in our
+            tracked = obj.__tracked
+        }
 
-        const { proxy, revoke } = Proxy.revocable(obj, {
+        const proxy = new Proxy(obj, {
             get (o, prop, r) {
                 const val = Reflect.get(o, prop, r)
+                if (!state.active) {
+                    return val
+                }
+                if (prop === "__tracked") {
+                    console.log(`Returning non-tracked object upon __tracked request`)
+                    return tracked
+                }
 
                 if (val !== null && typeof val === 'object') {
                     // one *child node per path segment* (prop)
@@ -85,17 +99,22 @@ export function track<T extends object> (target: T) {
                     }
                     return makeProxy(val, child)
                 } else {
+                    // XXXvlab: this let Functions to pass through
                     node.read[prop] = val
                     return val
                 }
             },
             has (o, prop) {
-                node.has[prop] = Reflect.has(o, prop)
-                return node.has[prop] as boolean
+                const val = Reflect.has(o, prop)
+                if (!state.active) return val
+                node.has[prop] = val
+                return val
             },
             ownKeys (o) {
-                node.ownKeys = Reflect.ownKeys(o)
-                return node.ownKeys
+                const val = Reflect.ownKeys(o)
+                if (!state.active) return val
+                node.ownKeys = val
+                return val
             },
 
             /** explicit descriptor request */
@@ -143,7 +162,9 @@ export function track<T extends object> (target: T) {
         })
 
         nodeToProxy.set(node, proxy)
-        allRevokes.push(revoke)
+        allProxiesToDisable.push(() => {
+            state.active = false
+        })
         return proxy
     }
 
@@ -153,10 +174,10 @@ export function track<T extends object> (target: T) {
 
     return {
         proxy,
-        getTrackAndRevoke (): TrackImprint {
+        getTrackAndDisable (): TrackImprint {
             // remove empty read or empty has
             cleanNode(rootNode)
-            for (const revoke of allRevokes) revoke()
+            for (const disableProxy of allProxiesToDisable) disableProxy()
             return rootNode
         },
     }
@@ -186,7 +207,7 @@ if (import.meta.vitest) {
 
             expect(a.b + a.c.d).toBe(2)
 
-            expect(tracker.getTrackAndRevoke()).toStrictEqual({
+            expect(tracker.getTrackAndDisable()).toStrictEqual({
                 ctor: new WeakRef(Object.constructor),
                 read: {
                     b: 1,
@@ -213,7 +234,7 @@ if (import.meta.vitest) {
             expect('b' in a).toBe(true)
             expect('x' in a.c).toBe(false)
 
-            expect(tracker.getTrackAndRevoke()).toStrictEqual({
+            expect(tracker.getTrackAndDisable()).toStrictEqual({
                 ctor: new WeakRef(Object.constructor),
                 has: { b: true },
                 read: {
@@ -239,7 +260,7 @@ if (import.meta.vitest) {
 
             expect(new Set(Object.keys(a))).toStrictEqual(new Set(['b', 'c']))
 
-            expect(tracker.getTrackAndRevoke()).toStrictEqual({
+            expect(tracker.getTrackAndDisable()).toStrictEqual({
                 ctor: new WeakRef(Object.constructor),
                 ownKeys: ['b', 'c'],
             })
@@ -262,7 +283,7 @@ if (import.meta.vitest) {
 
             expect(b.p.x + b.q.y).toBe(3)
 
-            let t = tracker.getTrackAndRevoke()
+            let t = tracker.getTrackAndDisable()
             expect(t).toStrictEqual({
                 ctor: new WeakRef(Object.constructor),
                 read: {
@@ -296,7 +317,7 @@ if (import.meta.vitest) {
             expect(b.p.x + b.q.y).toBe(3)
             expect(b.p.x + b.p.y).toBe(3)
 
-            let t = tracker.getTrackAndRevoke()
+            let t = tracker.getTrackAndDisable()
             expect(t).toStrictEqual({
                 ctor: new WeakRef(Object.constructor),
                 read: {
@@ -341,9 +362,40 @@ if (import.meta.vitest) {
             ;(root as any).a = 2
             void p.a // second read = 2
 
-            expect(() => t.getTrackAndRevoke()).not.toThrow()
+            expect(() => t.getTrackAndDisable()).not.toThrow()
         })
 
+        it('track function calls', () => {
+            const root = { function a() {
+                return 2
+            } }
+            const t = track(root)
+            const p = t.proxy
+
+            // two identical reads
+            void p.a // first read = 1
+            ;(root as any).a = 2
+            void p.a // second read = 2
+
+            expect(t).toStrictEqual({
+                ctor: new WeakRef(Object.constructor),
+                read: {
+                    p: {
+                        ctor: new WeakRef(Object.constructor),
+                        read: {
+                            x: 1,
+                            y: 2,
+                        },
+                    },
+                    q: {
+                        ctor: new WeakRef(Object.constructor),
+                        read: {
+                            y: 2,
+                        },
+                    },
+                },
+            })
+       })
     })
 
 }

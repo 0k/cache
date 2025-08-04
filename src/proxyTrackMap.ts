@@ -165,6 +165,10 @@ export class ImprintTreeMap<V = unknown> {
     }
 
     get (obj: unknown): V | undefined {
+        if (obj !== null && typeof obj === "object" && obj.__tracked) {
+            console.log(`          XXXX using get tracked ${obj.__tracked}`, obj.__tracked)
+            value = value.__tracked || value
+        }
         return this.lookupInList(this.roots, obj)
     }
 
@@ -173,6 +177,10 @@ export class ImprintTreeMap<V = unknown> {
         imprint: TrackImprint,
         value: V,
     ): Node<V>[] {
+        if (value !== null && typeof value === "object" && value.__tracked) {
+            console.log(`          HAHA tracked ${value.__tracked}`, value.__tracked)
+            value = value.__tracked || value
+        }
         for (let i = 0; i < list.length; ++i) {
             const node = list[i]
             const [inter, onlyA, onlyB] = trackImprintSplit(

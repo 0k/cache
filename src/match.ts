@@ -2,13 +2,23 @@ import { track, TrackImprint } from './track'
 
 
 export function match (imprint: TrackImprint, obj: unknown): boolean {
-    if (obj === null || typeof obj !== 'object') return false
+    console.log(`  MATCH? imprint`, imprint)
+    console.log(`         object `, obj)
+    if (obj === null || typeof obj !== 'object') {
+        console.log(`    NO MATCH: not object`)
+        return false
+    }
 
     //  optional ctor check
     if (imprint.ctor) {
         const expected = imprint.ctor.deref() // may be undefined if GC-ed
-        if (expected && (obj as any).constructor !== expected) return false
+        const actual = (obj as any).constructor
+        if (expected && actual !== expected) {
+            console.log(`    NO MATCH: ctor: ${actual} !== ${expected}`)
+            return false
+        }
     }
+    console.log(`      1`)
 
     // optional has check
     for (const key of Reflect.ownKeys(imprint.has || {})) {
@@ -17,6 +27,7 @@ export function match (imprint: TrackImprint, obj: unknown): boolean {
 
         if (actual !== expected) return false
     }
+    console.log(`      2`)
 
     // optional ownKeys
     if (imprint.ownKeys) {
@@ -26,17 +37,27 @@ export function match (imprint: TrackImprint, obj: unknown): boolean {
         if (!actual.every((v, i) => v === expected[i])) return false
     }
 
+    console.log(`      3`)
     // option property check
     for (const key of Reflect.ownKeys(imprint.read || {})) {
         const expected = imprint.read[key]
         const actual = obj[key]
+        console.log(`      read ${String(key)}...`)
 
         if (expected !== null && typeof expected === 'object') {
-            if (!match(expected as TrackImprint, actual)) return false
+            if (!match(expected as TrackImprint, actual)) {
+                console.log(`    SUBMATCHING`)
+                return false
+            }
         } else {
-            if (actual !== expected) return false
+            if (actual !== expected) {
+                console.log(`    NO MATCH: read ${key}: ${actual} !== ${expected}`)
+                return false
+            }
         }
+        console.log(`      read ${String(key)} MATCHED`)
     }
+    console.log(`      MATCHING !`)
     return true
 }
 
@@ -58,7 +79,7 @@ if (import.meta.vitest) {
 
             a.b + a.c.d
 
-            let t = tracker.getTrackAndRevoke()
+            let t = tracker.getTrackAndDisable()
             expect(match(t, { b: 1, d: 2, c: { d: 1 } })).toBe(true)
             expect(match(t, { b: 1, d: 3, c: { d: 1 } })).toBe(true)
             expect(match(t, { b: 1, d: 3, c: { d: 2 } })).toBe(false)
@@ -76,7 +97,7 @@ if (import.meta.vitest) {
 
             'b' in a
 
-            let t = tracker.getTrackAndRevoke()
+            let t = tracker.getTrackAndDisable()
             expect(match(t, { b: 1 })).toBe(true)
             expect(match(t, { b: false })).toBe(true)
             expect(match(t, { c: null })).toBe(false)
@@ -94,7 +115,7 @@ if (import.meta.vitest) {
 
             Object.keys(a.c)
 
-            let t = tracker.getTrackAndRevoke()
+            let t = tracker.getTrackAndDisable()
             expect(match(t, { b: 1 })).toBe(false)
             expect(match(t, { c: { d: false, e: undefined } })).toBe(true)
             expect(match(t, { c: { d: false, e: undefined, f: true } })).toBe(
