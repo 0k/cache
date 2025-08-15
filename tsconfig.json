@@ -1,7 +1,15 @@
 {
     "compilerOptions": {
-        "target": "esnext",
-        "module": "esnext",
+      // required to keep es2020 to force compilation of
+      // helpers for new TS5 decorators. In esnext, it
+      // doesn't bake the helpers, trusting caller code to
+      // know how to deal with them. This forces the caller
+      // code to NOT use experimental decorators. With this
+      // set to `es2020`, we leave the choice to the caller
+      // code to use whichever decorator implementation they
+      // want.
+        "target": "es2020",
+        "module": "es2020",
         "moduleResolution": "node",
         "declaration": true,
         "removeComments": false,
