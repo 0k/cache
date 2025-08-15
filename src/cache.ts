@@ -335,7 +335,7 @@ if (import.meta.vitest) {
             class A {
 
                 @cache
-                compute (x: number) {
+                compute (_x: number) {
                     console.warn('computing...')
                     throw new Error('Argl')
                 }
@@ -871,7 +871,7 @@ if (import.meta.vitest) {
     })
     describe('cache factory', () => {
         it('cache is its own factory', () => {
-            const mycache = cache({ key: ({ i, args }) => args[0] })
+            const mycache = cache({ key: ({ _i, args }) => args[0] })
 
             class A {
                 @mycache
@@ -891,7 +891,7 @@ if (import.meta.vitest) {
             // It should still work with new arguments
 
             class B {
-                @mycache({ key: ({ i, args }) => args[1] })
+                @mycache({ key: ({ _i, args }) => args[1] })
                 compute2x (x: number, y: number) {
                     console.warn(`computing... ${x}+${y}`)
                     return x + y
