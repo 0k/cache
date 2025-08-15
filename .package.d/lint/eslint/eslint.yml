@@ -13,6 +13,7 @@ rules:
         - code: {{.max-len}}
           tabWidth: 4
           comments: {{.max-len}}
+          ignorePattern: "^\\s*it\\('.*',\\s*(async )?\\(\\)\\s*=>\\s*\\{\\s*$"
     indent:
         - error
         - {{.indent}}
@@ -28,6 +29,17 @@ rules:
     no-multi-spaces:
         - error
         - ignoreEOLComments: true
+    no-unused-vars:
+        - off
+    "@typescript-eslint/no-unused-vars":
+        - error
+        - varsIgnorePattern: '^_'
+          argsIgnorePattern: '^_'
+          caughtErrorsIgnorePattern: '^_'
+          destructuredArrayIgnorePattern: '^_'
+          reportUsedIgnorePattern: true
+    #no-console:
+    #    - error
 parser: '@typescript-eslint/parser'
 plugins:
     - '@typescript-eslint'
