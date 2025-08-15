@@ -214,7 +214,7 @@ if (import.meta.vitest) {
     })
 
     describe('on getter', () => {
-        it('should apply on getter directly', () => {
+        it('should apply directly', () => {
             class A {
                 @cache
                 get value () {
@@ -301,7 +301,7 @@ if (import.meta.vitest) {
         })
     })
     describe('on method', () => {
-        it('should apply on method directly', () => {
+        it('should apply directly', () => {
             class A {
 
                 @cache
@@ -840,43 +840,43 @@ if (import.meta.vitest) {
                 )
             })
         })
-        describe('cache factory', () => {
-            it('cache is its own factory', () => {
-                const mycache = cache({ key: ({ i, args }) => args[0] })
+    })
+    describe('cache factory', () => {
+        it('cache is its own factory', () => {
+            const mycache = cache({ key: ({ i, args }) => args[0] })
 
-                class A {
-                    @mycache
-                    compute2x (x: number, y: number) {
-                        console.warn(`computing... ${x}+${y}`)
-                        return x + y
-                    }
+            class A {
+                @mycache
+                compute2x (x: number, y: number) {
+                    console.warn(`computing... ${x}+${y}`)
+                    return x + y
                 }
+            }
 
-                const a = new A()
-                expect(a.compute2x(3, 2)).toBe(5)
-                expect(a.compute2x(3, 3)).toBe(5) // !!
+            const a = new A()
+            expect(a.compute2x(3, 2)).toBe(5)
+            expect(a.compute2x(3, 3)).toBe(5) // !!
 
-                expect(warnSpy).toHaveBeenCalledTimes(1)
-                expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing... 3+2')
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing... 3+2')
 
-                // It should still work with new arguments
+            // It should still work with new arguments
 
-                class B {
-                    @mycache({ key: ({ i, args }) => args[1] })
-                    compute2x (x: number, y: number) {
-                        console.warn(`computing... ${x}+${y}`)
-                        return x + y
-                    }
+            class B {
+                @mycache({ key: ({ i, args }) => args[1] })
+                compute2x (x: number, y: number) {
+                    console.warn(`computing... ${x}+${y}`)
+                    return x + y
                 }
+            }
 
-                const b = new B()
+            const b = new B()
 
-                expect(b.compute2x(2, 5)).toBe(7)
-                expect(b.compute2x(3, 5)).toBe(7) // !!
+            expect(b.compute2x(2, 5)).toBe(7)
+            expect(b.compute2x(3, 5)).toBe(7) // !!
 
-                expect(warnSpy).toHaveBeenCalledTimes(2)
-                expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing... 2+5')
-            })
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing... 2+5')
         })
     })
 }
