@@ -229,7 +229,22 @@ if (import.meta.vitest) {
             expect(warnSpy).toHaveBeenCalledTimes(1)
             expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing...')
         })
+        it('should NOT save value if exception', () => {
+            class A {
+                @cache
+                get value () {
+                    console.warn('computing...')
+                    throw new Error('Argl')
+                }
+            }
+            const a = new A()
+            expect(() => a.value).toThrow('Argl')
+            expect(() => a.value).toThrow('Argl')
 
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing...')
+            expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing...')
+        })
         it('`this` should be accessible and tracked', () => {
             class A {
                 value
@@ -315,6 +330,23 @@ if (import.meta.vitest) {
             expect(a.compute(2)).toBe(4)
             expect(a.compute(3)).toBe(6)
             expect(a.compute(3)).toBe(6)
+
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing...')
+            expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing...')
+        })
+        it('should NOT save upon exception', () => {
+            class A {
+
+                @cache
+                compute (x: number) {
+                    console.warn('computing...')
+                    throw new Error('Argl')
+                }
+            }
+            const a = new A()
+            expect(() => a.compute(2)).toThrow('Argl')
+            expect(() => a.compute(2)).toThrow('Argl')
 
             expect(warnSpy).toHaveBeenCalledTimes(2)
             expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing...')
