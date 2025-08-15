@@ -1,10 +1,11 @@
 // types
 
 export type CacheStore = {
-    getValue(fn: Function, instance: any, args: any[]): any
+    getValue(fn: Function, instance: any, args: any[]): any[]
 }
 
 type CacheOptions = {
+    noCacheOnReject?: boolean
     cacheStore?: new (...args: any[]) => CacheStore
     noClearCache?: boolean // wether to make this cache unclearable
     key?: (...args: any[]) => any
@@ -57,7 +58,20 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
         let opts: CacheOptions = args[0] || {}
         opts = { ...defaultOpts, ...opts }
 
-        const CacheStore = opts.cacheStore || JsonKeyCacheStore
+        const DefaultCacheStore = opts.cacheStore || JsonKeyCacheStore
+        let CacheStore
+        if (opts.noCacheOnReject) {
+            class NewCacheStore extends DefaultCacheStore {
+
+                @noCacheOnReject
+                getValue (fn, instance, args) {
+                    return super.getValue(fn, instance, args)
+                }
+            }
+            CacheStore = NewCacheStore
+        } else {
+            CacheStore = DefaultCacheStore
+        }
         return function (target: any, context: any) {
             if (arguments.length === 3) {
                 throw new Error(
@@ -89,7 +103,12 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                     instanceCache = new CacheStore(opts)
                     instanceCacheMap.set(instance, instanceCache)
                 }
-                return instanceCache.getValue(target, instance, args)
+                const [val, _argsKey, _isHit] = instanceCache.getValue(
+                    target,
+                    instance,
+                    args,
+                )
+                return val
             }
 
             context.addInitializer(function () {
@@ -135,6 +154,34 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
 export const cache = cacheFactory()
 
 
+
+function noCacheOnReject (target: any) {
+    return function (...args) {
+        const [result, argsKey, isHit] = Reflect.apply(
+            target,
+            this,
+            args,
+        ) as any[]
+        if (!isHit) return [result, argsKey, isHit]
+        const self = this
+        return [
+            (async function () {
+                let val
+                try {
+                    val = await result
+                } catch (_err) {
+                    self.delete(argsKey)
+                    return Reflect.apply(target, self, args)
+                }
+                return val
+            })(),
+            argsKey,
+            undefined,
+        ]
+    }
+}
+
+
 // cache stores
 
 export class JsonKeyCacheStore extends Map implements CacheStore {
@@ -149,14 +196,14 @@ export class JsonKeyCacheStore extends Map implements CacheStore {
         }
     }
 
-    getValue (fn, instance, args) {
+    getValue (fn, instance, args: any[]) {
         const argsKey = JSON.stringify(this.opts.key({ instance, args }))
         if (!this.has(argsKey)) {
             const result = fn.apply(instance, args)
             this.set(argsKey, result)
-            return result
+            return [result, argsKey, false]
         }
-        return this.get(argsKey)
+        return [this.get(argsKey), argsKey, true]
     }
 }
 
@@ -186,12 +233,12 @@ export class JsonKeyTTLCacheStore extends Map implements CacheStore {
                     ? this.opts.ttl({ instance, args })
                     : this.opts.ttl
             if (ttl === -1 || timestamp + ttl * 1000 > now) {
-                return result
+                return [result, argsKey, true]
             }
         }
         const result = fn.apply(instance, args)
         this.set(argsKey, result)
-        return result
+        return [result, argsKey, false]
     }
 }
 
@@ -911,4 +958,94 @@ if (import.meta.vitest) {
             expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing... 2+5')
         })
     })
+    describe('promises', () => {
+        it('promises are cached as-is', async () => {
+
+            class A {
+                @cache
+                async compute2x (x: number, y: number) {
+                    console.warn(`computing... ${x}+${y}`)
+                    return x + y
+                }
+            }
+
+            const a = new A()
+            expect(await a.compute2x(3, 2)).toBe(5)
+            expect(await a.compute2x(3, 2)).toBe(5)
+
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing... 3+2')
+        })
+        it('promises are cached as-is 2', async () => {
+
+            const p = []
+            class A {
+                @cache
+                compute2x (_x: number, _y: number) {
+                    return new Promise((resolve, reject) => {
+                        p.push({ resolve, reject })
+                    })
+                }
+            }
+
+            const a = new A()
+            const promise1 = a.compute2x(3, 2)
+            const promise2 = a.compute2x(3, 2)
+            expect(Object.is(promise1, promise2)).toBe(true)
+
+            expect(p.length).toBe(1)
+        })
+        it('promises are smart when noCacheOnReject is provided', async () => {
+
+            const p = []
+            class A {
+                @cache({
+                    noCacheOnReject: true,
+                    key: ({ _i, args: [x, y, _callNb] }) => [x, y],
+                })
+                compute2x (x: number, y: number, callNb: number) {
+                    return new Promise((resolve, reject) => {
+                        console.warn(
+                            `evaled with ${x}+${y} (callNb: ${callNb})`,
+                        )
+                        p.push({ resolve, reject })
+                    })
+                }
+            }
+
+            const a = new A()
+            const promise1 = a.compute2x(3, 2, 1)
+            const promise2 = a.compute2x(3, 2, 2)
+            expect(Object.is(promise1, promise2)).toBe(false)
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                1,
+                'evaled with 3+2 (callNb: 1)',
+            )
+            expect(
+                await Promise.allSettled([
+                    (async () => {
+                        p[0].reject(new Error('Argl'))
+                    })(),
+                    promise1,
+                ]),
+            ).toStrictEqual([
+                {
+                    status: 'fulfilled',
+                    value: undefined,
+                },
+                {
+                    reason: new Error('Argl'),
+                    status: 'rejected',
+                },
+            ])
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                2,
+                'evaled with 3+2 (callNb: 2)',
+            )
+
+        })
+    })
+
 }
