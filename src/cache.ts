@@ -5,6 +5,7 @@ export type CacheStore = {
 }
 
 type CacheOptions = {
+    cacheOnSettled?: boolean
     noCacheOnReject?: boolean
     cacheStore?: new (...args: any[]) => CacheStore
     noClearCache?: boolean // wether to make this cache unclearable
@@ -59,14 +60,27 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
         opts = { ...defaultOpts, ...opts }
 
         const DefaultCacheStore = opts.cacheStore || JsonKeyCacheStore
-        let CacheStore
-        if (opts.noCacheOnReject) {
-            class NewCacheStore extends DefaultCacheStore {
 
-                @noCacheOnReject
-                getValue (fn, instance, args) {
-                    return super.getValue(fn, instance, args)
-                }
+        if (opts.noCacheOnReject && opts.cacheOnSettled) {
+            throw new CacheError(
+                "Options 'noCacheOnReject' and 'cacheOnSettled' " +
+                    'are mutually exclusive.',
+            )
+        }
+
+        let CacheStore
+        if (opts.noCacheOnReject || opts.cacheOnSettled) {
+            class NewCacheStore extends DefaultCacheStore {}
+            let gv = NewCacheStore.prototype.getValue as Function
+
+            if (opts.noCacheOnReject) {
+                gv = noCacheOnReject(gv)
+            } else if (opts.cacheOnSettled) {
+                gv = cacheOnSettled(gv)
+            }
+
+            NewCacheStore.prototype.getValue = function (...a: any[]) {
+                return gv.apply(this, a)
             }
             CacheStore = NewCacheStore
         } else {
@@ -177,6 +191,26 @@ function noCacheOnReject (target: any) {
             })(),
             argsKey,
             undefined,
+        ]
+    }
+}
+
+function cacheOnSettled (target: Function) {
+    return function (this: Map<any, any>, ...args: any[]) {
+        const [result, argsKey, isHit] = Reflect.apply(target, this, args)
+        if (isHit || !(result instanceof Promise)) {
+            return [result, argsKey, isHit]
+        }
+        // XXXvlab: yuck !
+        this.delete(argsKey)
+        return [
+            (async () => {
+                const v = await result // throws through on reject
+                this.set(argsKey, v)
+                return v
+            })(),
+            argsKey,
+            false,
         ]
     }
 }
@@ -1046,6 +1080,222 @@ if (import.meta.vitest) {
             )
 
         })
+        it('noCacheOnReject: second call waits for the first to settle', async () => {
+            const p: Array<{ resolve: (v: number) => void }> = []
+
+            class A {
+                @cache({
+                    noCacheOnReject: true,
+                    key: ({ args: [x, y] }) => [x, y],
+                })
+                compute2x (x: number, y: number, callLabel: string) {
+                    console.warn(
+                        `evaled with ${x}+${y}, callLabel: ${callLabel}`,
+                    )
+                    return new Promise<number>((resolve) => {
+                        p.push({ resolve })
+                    })
+                }
+            }
+
+            const a = new A()
+
+            const p1 = (async () => {
+                const res = await a.compute2x(3, 2, 'p1')
+                console.warn(`resolved p1 with ${res}`)
+                return res
+            })()
+            const p2 = (async () => {
+                const res = await a.compute2x(3, 2, 'p2')
+                console.warn(`resolved p2 with ${res}`)
+                return res
+            })()
+
+            // One shared in-flight promise (second call reuses the first)
+            expect(p.length).toBe(1)
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                1,
+                'evaled with 3+2, callLabel: p1',
+            )
+
+            // When the underlying promise settles, both callers
+            // resolve; p2 cannot beat p1
+            p[0].resolve(5)
+            await expect(Promise.all([p1, p2])).resolves.toEqual([5, 5])
+
+            expect(warnSpy).toHaveBeenCalledTimes(3)
+            expect(warnSpy).toHaveBeenNthCalledWith(2, 'resolved p1 with 5')
+            expect(warnSpy).toHaveBeenNthCalledWith(3, 'resolved p2 with 5')
+        })
+        it('in-flight promises are NOT cached with cacheOnSettled', async () => {
+            const p: Array<{ resolve: (v: number) => void }> = []
+
+            class A {
+                @cache({
+                    cacheOnSettled: true,
+                    key: ({ args: [x, y] }) => [x, y],
+                })
+                compute2x (x: number, y: number) {
+                    console.warn(`evaled with ${x}+${y}`)
+                    return new Promise<number>((resolve) => {
+                        p.push({ resolve })
+                    })
+                }
+            }
+
+            const a = new A()
+            const promise1 = a.compute2x(3, 2)
+            const promise2 = a.compute2x(3, 2)
+
+            expect(Object.is(promise1, promise2)).toBe(false)
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'evaled with 3+2')
+            expect(warnSpy).toHaveBeenNthCalledWith(2, 'evaled with 3+2')
+
+            p[0].resolve(5)
+            p[1].resolve(5)
+
+            expect(await promise1).toBe(5)
+            expect(await promise2).toBe(5)
+        })
+
+        it('caches the fulfilled value after it settles', async () => {
+            const p: Array<{ resolve: (v: number) => void }> = []
+
+            class A {
+                @cache({
+                    cacheOnSettled: true,
+                    key: ({ args: [x, y] }) => [x, y],
+                })
+                compute2x (x: number, y: number) {
+                    console.warn(`evaled with ${x}+${y}`)
+                    return new Promise<number>((resolve) => {
+                        p.push({ resolve })
+                    })
+                }
+            }
+
+            const a = new A()
+
+            const first = a.compute2x(3, 2)
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'evaled with 3+2')
+
+            p[0].resolve(5)
+            expect(await first).toBe(5)
+
+            // After settle, value is cached (no new eval/log)
+            expect(await a.compute2x(3, 2)).toBe(5)
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+        })
+
+        it('rejection is NOT cached; next call recomputes', async () => {
+            const p: Array<{
+                resolve: (v: number) => void
+                reject: (e: any) => void
+            }> = []
+
+            class A {
+                @cache({
+                    cacheOnSettled: true,
+                    key: ({ args: [x, y] }) => [x, y],
+                })
+                compute2x (x: number, y: number) {
+                    console.warn(`evaled with ${x}+${y}`)
+                    return new Promise<number>((resolve, reject) => {
+                        p.push({ resolve, reject })
+                    })
+                }
+            }
+
+            const a = new A()
+
+            const promise1 = a.compute2x(3, 2)
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'evaled with 3+2')
+
+            const results = await Promise.allSettled([
+                (async () => {
+                    p[0].reject(new Error('boom'))
+                })(),
+                promise1,
+            ])
+            expect(results).toStrictEqual([
+                { status: 'fulfilled', value: undefined },
+                { status: 'rejected', reason: new Error('boom') },
+            ])
+
+            // Rejection wasn't cached → recompute happens
+            const promise2 = a.compute2x(3, 2)
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(2, 'evaled with 3+2')
+
+            // Fulfill second call
+            p[1]?.resolve(5)
+            expect(await promise2).toBe(5)
+
+            // Now it should be cached
+            expect(await a.compute2x(3, 2)).toBe(5)
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+        })
+        it('cacheOnSettled: second call can finish before the first', async () => {
+            const p: Array<{ resolve: (v: number) => void }> = []
+
+            class A {
+                @cache({
+                    cacheOnSettled: true,
+                    key: ({ args: [x, y] }) => [x, y],
+                })
+                compute2x (x: number, y: number, callLabel: string) {
+                    console.warn(
+                        `evaled with ${x}+${y}, callLabel: ${callLabel}`,
+                    )
+                    return new Promise<number>((resolve) => {
+                        p.push({ resolve })
+                    })
+                }
+            }
+
+            const a = new A()
+
+            const p1 = (async () => {
+                const res = await a.compute2x(3, 2, 'p1')
+                console.warn(`resolved p1 with ${res}`)
+                return res
+            })()
+            const p2 = (async () => {
+                const res = await a.compute2x(3, 2, 'p2')
+                console.warn(`resolved p2 with ${res}`)
+                return res
+            })()
+
+            // Two independent in-flight promises (not deduped)
+            expect(p.length).toBe(2)
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                1,
+                'evaled with 3+2, callLabel: p1',
+            )
+            expect(warnSpy).toHaveBeenNthCalledWith(
+                2,
+                'evaled with 3+2, callLabel: p2',
+            )
+
+            // Resolve second before first
+            p[1].resolve(5)
+            await expect(p2).resolves.toBe(5)
+            expect(warnSpy).toHaveBeenCalledTimes(3)
+            expect(warnSpy).toHaveBeenNthCalledWith(3, 'resolved p2 with 5')
+
+            p[0].resolve(5)
+            await expect(p1).resolves.toBe(5)
+            expect(warnSpy).toHaveBeenCalledTimes(4)
+            expect(warnSpy).toHaveBeenNthCalledWith(4, 'resolved p1 with 5')
+        })
+
+
+
     })
 
 }
