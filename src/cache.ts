@@ -177,11 +177,11 @@ function noCacheOnReject (target: any) {
             args,
         ) as any[]
         if (!isHit) return [result, argsKey, isHit]
-        const self = this
         if (!(result instanceof Promise)) {
             // if result is not a promise, we just return it
             return [result, argsKey, isHit]
         }
+        const self = this
         return [
             (async function () {
                 let val
@@ -1415,7 +1415,7 @@ if (import.meta.vitest) {
             expect(warnSpy).toHaveBeenCalledTimes(2)
             expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing... 3+2')
         })
-        it('should cache values indefinitely with ttl = -1', async () => {
+        it('should cache values indefinitely with ttl -1', async () => {
 
             vi.setSystemTime(0)
 
