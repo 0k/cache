@@ -245,7 +245,7 @@ export class JsonKeyCacheStore extends Map implements CacheStore {
     }
 }
 
-export class JsonKeyTTLCacheStore extends Map implements CacheStore {
+export class TimestampJsonKeyTTLCacheStore extends Map implements CacheStore {
     opts: Record<string, any>
     constructor (opts: { key: string }) {
         super()
@@ -280,6 +280,52 @@ export class JsonKeyTTLCacheStore extends Map implements CacheStore {
     }
 }
 
+export class TimeoutJsonKeyTTLCacheStore extends Map implements CacheStore {
+    opts: Record<string, any>
+    constructor (opts: { key: string }) {
+        super()
+        this.opts = {
+            key: (x: any) => x,
+            ttl: 60, // in seconds
+            ...opts,
+        }
+    }
+
+    set (key, value) {
+        const { argsKey, ttl } = key
+        if (ttl !== -1) {
+            setTimeout(() => {
+                this.delete(key)
+            }, ttl * 1000)
+        }
+        return super.set(argsKey, [value, ttl])
+    }
+
+    delete (key) {
+        const { argsKey, _ttl } = key
+        return super.delete(argsKey)
+    }
+
+    getValue (fn, instance, args) {
+        const argsKey = JSON.stringify(this.opts.key({ instance, args }))
+        let result = this.get(argsKey)
+        if (result) {
+            const [value, ttl] = result
+            return [value, { argsKey, ttl }, true]
+        }
+        result = fn.apply(instance, args)
+
+        const ttl =
+            typeof this.opts.ttl === 'function'
+                ? this.opts.ttl({ instance, args })
+                : this.opts.ttl
+        this.set({ argsKey, ttl }, result)
+        return [result, { argsKey, ttl }, false]
+    }
+}
+
+export const JsonKeyTTLCacheStore = TimeoutJsonKeyTTLCacheStore
+
 export function addUnwrapFn (unwrapFn: Function) {
     globalThis[KEY].push(unwrapFn)
 }
@@ -290,7 +336,14 @@ export function addUnwrapFn (unwrapFn: Function) {
 
 /* @skip-prod-transpilation */
 if (import.meta.vitest) {
-    const { it, expect, describe, vi, beforeEach } = import.meta.vitest
+    const {
+        it,
+        expect,
+        describe,
+        vi,
+        beforeEach,
+        afterEach,
+    } = import.meta.vitest
 
     let warnSpy: ReturnType<typeof vi.spyOn>
 
@@ -1315,9 +1368,82 @@ if (import.meta.vitest) {
             expect(warnSpy).toHaveBeenCalledTimes(4)
             expect(warnSpy).toHaveBeenNthCalledWith(4, 'resolved p1 with 5')
         })
-
-
-
     })
 
+    describe.each([
+        ['Timeout', TimeoutJsonKeyTTLCacheStore],
+        ['Timestamp', TimestampJsonKeyTTLCacheStore],
+    ])('TTL Cache Store %s implem', (_label, cacheStore) => {
+
+        let warnSpy: ReturnType<typeof vi.spyOn>
+
+        beforeEach(() => {
+            warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+            vi.useFakeTimers()
+        })
+        afterEach(() => {
+            vi.useRealTimers()
+            vi.restoreAllMocks()
+        })
+
+        it('should cache values with ttl', async () => {
+
+            vi.setSystemTime(0)
+
+            const ttlcache = cache({ cacheStore })
+
+            class A {
+                @ttlcache({ ttl: 2 })
+                compute2x (x: number, y: number) {
+                    console.warn(`computing... ${x}+${y}`)
+                    return x + y
+                }
+            }
+
+            const a = new A()
+            expect(a.compute2x(3, 2)).toBe(5) // compute
+
+            vi.advanceTimersByTime(1999)
+
+            expect(a.compute2x(3, 2)).toBe(5) // cached
+
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing... 3+2')
+            vi.advanceTimersByTime(1)
+
+            expect(a.compute2x(3, 2)).toBe(5) // recompute after ttl
+            expect(warnSpy).toHaveBeenCalledTimes(2)
+            expect(warnSpy).toHaveBeenNthCalledWith(2, 'computing... 3+2')
+        })
+        it('should cache values indefinitely with ttl = -1', async () => {
+
+            vi.setSystemTime(0)
+
+            const ttlcache = cache({
+                cacheStore: JsonKeyTTLCacheStore,
+            })
+
+            class A {
+                @ttlcache({ ttl: -1 })
+                compute2x (x: number, y: number) {
+                    console.warn(`computing... ${x}+${y}`)
+                    return x + y
+                }
+            }
+
+            const a = new A()
+            expect(a.compute2x(3, 2)).toBe(5) // compute
+
+            vi.advanceTimersByTime(1999)
+
+            expect(a.compute2x(3, 2)).toBe(5) // cached
+
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing... 3+2')
+            vi.advanceTimersByTime(1)
+
+            expect(a.compute2x(3, 2)).toBe(5) // cached
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+        })
+    })
 }
