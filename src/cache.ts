@@ -178,6 +178,10 @@ function noCacheOnReject (target: any) {
         ) as any[]
         if (!isHit) return [result, argsKey, isHit]
         const self = this
+        if (!(result instanceof Promise)) {
+            // if result is not a promise, we just return it
+            return [result, argsKey, isHit]
+        }
         return [
             (async function () {
                 let val
@@ -1078,6 +1082,24 @@ if (import.meta.vitest) {
                 2,
                 'evaled with 3+2 (callNb: 2)',
             )
+
+        })
+        it('non-promises are not broken when noCacheOnReject is provided', async () => {
+            class A {
+                @cache({
+                    noCacheOnReject: true,
+                })
+                compute2x (x: number) {
+                    console.warn(`computing... 2*${x}`)
+                    return 2 * x
+                }
+            }
+
+            const a = new A()
+            expect(a.compute2x(3)).toBe(6)
+            expect(a.compute2x(3)).toBe(6)
+            expect(warnSpy).toHaveBeenCalledTimes(1)
+            expect(warnSpy).toHaveBeenNthCalledWith(1, 'computing... 2*3')
 
         })
         it('noCacheOnReject: second call waits for the first to settle', async () => {
