@@ -27,7 +27,7 @@ export class CacheError extends Error {
 
 const KEY = Symbol.for('@0k/cache/config')
 
-globalThis[KEY] = [] as Function[]
+globalThis[KEY] ||= [] as Function[]
 
 const allCaches = new WeakMap<any, Set<WeakMap<any, any>>>()
 
