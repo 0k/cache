@@ -145,8 +145,18 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                     if (!Object.hasOwnProperty.call(instance, 'clearCaches')) {
                         instance.clearCaches = function () {
                             if (!methodCaches) return
+                            let inst = this
+                            let changed = true
+                            while (changed) {
+                                let unwrapped = inst
+                                for (const unwrapFn of unwrapFns) {
+                                    unwrapped = unwrapFn(unwrapped)
+                                }
+                                changed = !Object.is(unwrapped, inst)
+                                inst = unwrapped
+                            }
                             for (const map of methodCaches) {
-                                map.delete(this)
+                                map.delete(inst)
                             }
                         }
                     }
@@ -939,6 +949,46 @@ if (import.meta.vitest) {
                     expect(a.value).toBe(2)
 
                     expect(warnSpy).toHaveBeenCalledTimes(2)
+                })
+            })
+            describe('clearCaches through proxy', () => {
+                it('should clear caches when called on a proxied instance', () => {
+                    const unwrapFns = globalThis[
+                        Symbol.for('@0k/cache/config')
+                    ] as Function[]
+                    const originalLength = unwrapFns.length
+
+                    class A {
+
+                        @cache
+                        compute (x: number) {
+                            console.warn(`computing... ${x}`)
+                            return x * 2
+                        }
+                    }
+
+                    const raw = new A()
+                    const proxied = new Proxy(raw, {})
+
+                    addUnwrapFn((obj: any) =>
+                        obj instanceof A && obj !== raw
+                            ? raw
+                            : obj,
+                    )
+
+                    try {
+                        expect(proxied.compute(5)).toBe(10) // compute
+                        expect(proxied.compute(5)).toBe(10) // cached
+
+                        expect(warnSpy).toHaveBeenCalledTimes(1)
+                        ;(proxied as any).clearCaches()
+
+                        expect(proxied.compute(5)).toBe(10) // should recompute
+
+                        expect(warnSpy).toHaveBeenCalledTimes(2)
+                    } finally {
+                        unwrapFns.length = originalLength
+                    }
                 })
             })
             describe('recursivity', () => {
