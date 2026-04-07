@@ -199,7 +199,7 @@ function noCacheOnReject (target: any) {
                     val = await result
                 } catch (_err) {
                     self.delete(argsKey)
-                    return Reflect.apply(target, self, args)
+                    return Reflect.apply(target, self, args)[0]
                 }
                 return val
             })(),
@@ -1255,6 +1255,32 @@ if (import.meta.vitest) {
                     'evaled with 3+2 (callNb: 2)',
                 )
 
+            })
+            it('noCacheOnReject: retry after awaited rejection returns the value', async () => {
+                let callCount = 0
+                class A {
+                    @cache({
+                        noCacheOnReject: true,
+                        key: ({ args: [x] }) => [x],
+                    })
+                    compute (x: number) {
+                        callCount++
+                        if (callCount === 1) {
+                            return Promise.reject(new Error('boom'))
+                        }
+                        return Promise.resolve(x * 2)
+                    }
+                }
+
+                const a = new A()
+
+                // First call: rejects
+                await expect(a.compute(3)).rejects.toThrow('boom')
+
+                // Second call: should retry and return the value
+                const result = await a.compute(3)
+                expect(result).toBe(6)
+                expect(callCount).toBe(2)
             })
             it('non-promises are not broken when noCacheOnReject is provided', async () => {
                 class A {
