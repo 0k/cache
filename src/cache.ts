@@ -215,7 +215,8 @@ function cacheOnSettled (target: Function) {
         if (isHit || !(result instanceof Promise)) {
             return [result, argsKey, isHit]
         }
-        // XXXvlab: yuck !
+        // XXXvlab: getValue already cached the promise; delete it so
+        // we can re-cache the resolved value after settlement.
         this.delete(argsKey)
         return [
             (async () => {
@@ -312,7 +313,7 @@ export class TimeoutJsonKeyTTLCacheStore extends Map implements CacheStore {
     }
 
     delete (key) {
-        const { argsKey, _ttl } = key
+        const { argsKey } = key
         return super.delete(argsKey)
     }
 
@@ -776,7 +777,7 @@ if (import.meta.vitest) {
 
                     expect(warnSpy).toHaveBeenCalledTimes(1)
                 })
-                it('should work when method is referring to "this"', () => {
+                it('should recompute when "this" properties change', () => {
                     class A {
                         value: any
 
