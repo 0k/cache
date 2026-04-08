@@ -7,6 +7,7 @@ export type CacheStore = {
 type CacheOptions = {
     cacheOnSettled?: boolean
     noCacheOnReject?: boolean
+    cancelOnClear?: boolean
     cacheStore?: new (...args: any[]) => CacheStore
     noClearCache?: boolean // wether to make this cache unclearable
     key?: (...args: any[]) => any
@@ -19,6 +20,13 @@ export class CacheError extends Error {
     constructor (message) {
         super(message)
         this.name = 'CacheError'
+    }
+}
+
+export class CancelledCache extends CacheError {
+    constructor () {
+        super('Cache was cleared while promise was in-flight')
+        this.name = 'CancelledCache'
     }
 }
 
@@ -122,6 +130,20 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                     instance,
                     args,
                 )
+                if (opts.cancelOnClear && val instanceof Promise) {
+                    return val.then(
+                        (resolved) => {
+                            if (!instanceCacheMap.has(instance))
+                                throw new CancelledCache()
+                            return resolved
+                        },
+                        (err) => {
+                            if (!instanceCacheMap.has(instance))
+                                throw new CancelledCache()
+                            throw err
+                        },
+                    )
+                }
                 return val
             }
 
@@ -1578,6 +1600,120 @@ if (import.meta.vitest) {
 
             expect(a.compute2x(3, 2)).toBe(5) // cached
             expect(warnSpy).toHaveBeenCalledTimes(1)
+        })
+    })
+
+
+    describe('cancelOnClear', () => {
+
+        it('resolves normally when cache is not cleared', async () => {
+            class A {
+                @cache({ cancelOnClear: true })
+                compute (x: number) {
+                    return Promise.resolve(x * 2)
+                }
+            }
+
+            const a = new A()
+            const result = await a.compute(3)
+            expect(result).toBe(6)
+        })
+
+
+        it('throws CancelledCache when clearCache is called before promise resolves', async () => {
+            let resolve: (v: number) => void
+            class A {
+                @cache({ cancelOnClear: true })
+                compute (x: number) {
+                    return new Promise<number>(r => { resolve = r })
+                }
+            }
+
+            const a = new A()
+            const p = a.compute(3)
+
+            ;(a.compute as any).clearCache()
+
+            resolve!(6)
+
+            await expect(p).rejects.toBeInstanceOf(CancelledCache)
+        })
+
+
+        it('throws CancelledCache when clearCaches is called before promise resolves', async () => {
+            let resolve: (v: number) => void
+            class A {
+                @cache({ cancelOnClear: true })
+                compute (x: number) {
+                    return new Promise<number>(r => { resolve = r })
+                }
+            }
+
+            const a = new A()
+            const p = a.compute(3)
+
+            ;(a as any).clearCaches()
+
+            resolve!(6)
+
+            await expect(p).rejects.toBeInstanceOf(CancelledCache)
+        })
+
+
+        it('throws CancelledCache when clearCache is called before promise rejects', async () => {
+            let reject: (e: Error) => void
+            class A {
+                @cache({ cancelOnClear: true })
+                compute (x: number) {
+                    return new Promise<number>((_, r) => { reject = r })
+                }
+            }
+
+            const a = new A()
+            const p = a.compute(3)
+
+            ;(a.compute as any).clearCache()
+
+            reject!(new Error('original error'))
+
+            await expect(p).rejects.toBeInstanceOf(CancelledCache)
+        })
+
+
+        it('works with noCacheOnReject: rejection without clear retries normally', async () => {
+            let callCount = 0
+            class A {
+                @cache({ cancelOnClear: true, noCacheOnReject: true })
+                compute (x: number) {
+                    callCount++
+                    if (callCount === 1) {
+                        return Promise.reject(new Error('transient'))
+                    }
+                    return Promise.resolve(x * 2)
+                }
+            }
+
+            const a = new A()
+
+            await expect(a.compute(3)).rejects.toThrow('transient')
+
+            const result = await a.compute(3)
+            expect(result).toBe(6)
+            expect(callCount).toBe(2)
+        })
+
+
+        it('sync return values are not affected', () => {
+            class A {
+                @cache({ cancelOnClear: true })
+                compute (x: number) {
+                    return x * 2
+                }
+            }
+
+            const a = new A()
+            expect(a.compute(3)).toBe(6)
+            expect(a.compute(3)).toBe(6)
         })
     })
 }
