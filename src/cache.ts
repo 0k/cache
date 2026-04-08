@@ -2,6 +2,7 @@
 
 export type CacheStore = {
     getValue(fn: Function, instance: any, args: any[]): any[]
+    set?(key: any, value: any): any
 }
 
 type CacheOptions = {
@@ -154,6 +155,18 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                         instanceCacheMap.delete(instance)
                     }
 
+                    function feedCache (args: any[], value: any) {
+                        let instanceCache = instanceCacheMap.get(instance)
+                        if (!instanceCache) {
+                            instanceCache = new CacheStore(opts)
+                            instanceCacheMap.set(instance, instanceCache)
+                        }
+                        const argsKey = JSON.stringify(
+                            opts.key({ instance, args }),
+                        )
+                        instanceCache.set(argsKey, value)
+                    }
+
                     const klass = Object.getPrototypeOf(instance)
                     let methodCaches = allCaches.get(klass)
                     if (!methodCaches) {
@@ -173,6 +186,7 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                             return wrapped.apply(this, args)
                         }
                         ownMethod.clearCache = clearCache
+                        ownMethod.feedCache = feedCache
                         instance[context.name] = ownMethod
                     } else if (context.kind === 'getter') {
                         const descriptor: PropertyDescriptor = {
@@ -182,6 +196,7 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                             },
                         }
                         ;(descriptor.get as any).clearCache = clearCache
+                        ;(descriptor.get as any).feedCache = feedCache
                         Object.defineProperty(
                             instance,
                             context.name,
@@ -1802,6 +1817,116 @@ if (import.meta.vitest) {
             const a = new A()
             expect(a.compute(3)).toBe(6)
             expect(a.compute(3)).toBe(6)
+        })
+    })
+
+
+    describe('feedCache', () => {
+
+        it('feeds a value on a method, skipping computation', () => {
+            const spy = vi.fn()
+            class A {
+                @cache
+                compute (x: number) {
+                    spy(x)
+                    return x * 2
+                }
+            }
+
+            const a = new A()
+            ;(a.compute as any).feedCache([3], 42)
+
+            expect(a.compute(3)).toBe(42)
+            expect(spy).not.toHaveBeenCalled()
+        })
+
+
+        it('feeds a value on a getter, skipping computation', () => {
+            const spy = vi.fn()
+            class A {
+                @cache
+                get value () {
+                    spy()
+                    return 'computed'
+                }
+            }
+
+            const a = new A()
+            ;(Object.getOwnPropertyDescriptor(
+                a, 'value',
+            ).get as any).feedCache([], 'fed')
+
+            expect(a.value).toBe('fed')
+            expect(spy).not.toHaveBeenCalled()
+        })
+
+
+        it('fed value is cleared by clearCache', () => {
+            const spy = vi.fn()
+            class A {
+                @cache
+                compute (x: number) {
+                    spy(x)
+                    return x * 2
+                }
+            }
+
+            const a = new A()
+            ;(a.compute as any).feedCache([3], 42)
+
+            expect(a.compute(3)).toBe(42)
+            expect(spy).not.toHaveBeenCalled()
+
+            ;(a.compute as any).clearCache()
+
+            expect(a.compute(3)).toBe(6)
+            expect(spy).toHaveBeenCalledTimes(1)
+        })
+
+
+        it('feeds only the specified args-key, others recompute', () => {
+            const spy = vi.fn()
+            class A {
+                @cache
+                compute (x: number) {
+                    spy(x)
+                    return x * 2
+                }
+            }
+
+            const a = new A()
+            ;(a.compute as any).feedCache([3], 42)
+
+            expect(a.compute(3)).toBe(42) // fed
+            expect(a.compute(5)).toBe(10) // computed
+
+            expect(spy).toHaveBeenCalledTimes(1)
+            expect(spy).toHaveBeenCalledWith(5)
+        })
+
+
+        it('feeds the correct instance with multiple instances', () => {
+            const spy = vi.fn()
+            class A {
+                name: string
+                constructor (name: string) { this.name = name }
+
+                @cache
+                compute (x: number) {
+                    spy(this.name, x)
+                    return x * 2
+                }
+            }
+
+            const a = new A('a')
+            const b = new A('b')
+            ;(a.compute as any).feedCache([3], 42)
+
+            expect(a.compute(3)).toBe(42) // fed
+            expect(b.compute(3)).toBe(6)  // computed
+
+            expect(spy).toHaveBeenCalledTimes(1)
+            expect(spy).toHaveBeenCalledWith('b', 3)
         })
     })
 }
