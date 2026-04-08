@@ -154,8 +154,6 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                         instanceCacheMap.delete(instance)
                     }
 
-                    wrapped.clearCache = clearCache
-
                     const klass = Object.getPrototypeOf(instance)
                     let methodCaches = allCaches.get(klass)
                     if (!methodCaches) {
@@ -163,6 +161,33 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                         allCaches.set(klass, methodCaches)
                     }
                     methodCaches.add(instanceCacheMap)
+
+                    // Shadow the prototype method/getter with a
+                    // per-instance version carrying its own
+                    // clearCache/feedCache.
+                    if (context.kind === 'method') {
+                        const ownMethod: any = function (
+                            this: any,
+                            ...args: any[]
+                        ) {
+                            return wrapped.apply(this, args)
+                        }
+                        ownMethod.clearCache = clearCache
+                        instance[context.name] = ownMethod
+                    } else if (context.kind === 'getter') {
+                        const descriptor: PropertyDescriptor = {
+                            configurable: true,
+                            get: function () {
+                                return wrapped.call(this)
+                            },
+                        }
+                        ;(descriptor.get as any).clearCache = clearCache
+                        Object.defineProperty(
+                            instance,
+                            context.name,
+                            descriptor,
+                        )
+                    }
 
                     if (!Object.hasOwnProperty.call(instance, 'clearCaches')) {
                         instance.clearCaches = function () {
@@ -871,6 +896,36 @@ if (import.meta.vitest) {
 
                     expect(warnSpy).toHaveBeenCalledTimes(3)
                 })
+                it('clearCache clears the correct instance with multiple instances', () => {
+                    const spy = vi.fn()
+                    class A {
+                        name: string
+                        constructor (name: string) { this.name = name }
+
+                        @cache
+                        compute (x: number) {
+                            spy(this.name, x)
+                            return 2 * x
+                        }
+                    }
+
+                    const a = new A('a')
+                    const b = new A('b')
+
+                    a.compute(5) // compute
+                    b.compute(5) // compute
+                    expect(spy).toHaveBeenCalledTimes(2)
+
+                    // Should clear a's cache only
+                    ;(a.compute as any).clearCache()
+                    spy.mockClear()
+
+                    a.compute(5) // should recompute
+                    b.compute(5) // should still be cached
+
+                    expect(spy).toHaveBeenCalledTimes(1)
+                    expect(spy).toHaveBeenCalledWith('a', 5)
+                })
                 it('should not allow clear cache when noClearCache is set', () => {
                     class A {
 
@@ -966,12 +1021,45 @@ if (import.meta.vitest) {
                     expect(a.value).toBe(2)
                     expect(a.value).toBe(2)
                     ;(Object.getOwnPropertyDescriptor(
-                        Object.getPrototypeOf(a),
+                        a,
                         'value',
                     ).get as any).clearCache()
                     expect(a.value).toBe(2)
 
                     expect(warnSpy).toHaveBeenCalledTimes(2)
+                })
+                it('clearCache on getter clears the correct instance with multiple instances', () => {
+                    const spy = vi.fn()
+                    class A {
+                        name: string
+                        constructor (name: string) { this.name = name }
+
+                        @cache
+                        get value () {
+                            spy(this.name)
+                            return this.name + '-val'
+                        }
+                    }
+
+                    const a = new A('a')
+                    const b = new A('b')
+
+                    expect(a.value).toBe('a-val')
+                    expect(b.value).toBe('b-val')
+                    expect(spy).toHaveBeenCalledTimes(2)
+
+                    // Should clear a's cache only
+                    ;(Object.getOwnPropertyDescriptor(
+                        a,
+                        'value',
+                    ).get as any).clearCache()
+                    spy.mockClear()
+
+                    expect(a.value).toBe('a-val') // should recompute
+                    expect(b.value).toBe('b-val') // should still be cached
+
+                    expect(spy).toHaveBeenCalledTimes(1)
+                    expect(spy).toHaveBeenCalledWith('a')
                 })
             })
             describe('clearCaches through proxy', () => {
