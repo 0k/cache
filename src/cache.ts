@@ -131,20 +131,6 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                     instance,
                     args,
                 )
-                if (opts.cancelOnClear && val instanceof Promise) {
-                    return val.then(
-                        (resolved) => {
-                            if (!instanceCacheMap.has(instance))
-                                throw new CancelledCache()
-                            return resolved
-                        },
-                        (err) => {
-                            if (!instanceCacheMap.has(instance))
-                                throw new CancelledCache()
-                            throw err
-                        },
-                    )
-                }
                 return val
             }
 
@@ -178,12 +164,51 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                     // Shadow the prototype method/getter with a
                     // per-instance version carrying its own
                     // clearCache/feedCache.
+                    let callWrapped: (...args: any[]) => any
+
+                    if (context.kind === 'method') {
+                        callWrapped = (...args) => wrapped.apply(instance, args)
+                    } else {
+                        callWrapped = () => wrapped.call(instance)
+                    }
+
+                    // When cancelOnClear is enabled, wrap the
+                    // result promise with a cancellation check
+                    // (using async/await).  The wrapper is
+                    // memoized per source promise so that
+                    // concurrent callers get the same object.
+                    if (opts.cancelOnClear) {
+                        const inner = callWrapped
+                        let cancelSource: any = null
+                        let cancelWrapper: any = null
+                        callWrapped = (...args) => {
+                            const result = inner(...args)
+                            if (!(result instanceof Promise)) return result
+                            if (result === cancelSource) return cancelWrapper
+                            cancelSource = result
+                            cancelWrapper = (async () => {
+                                let val
+                                try {
+                                    val = await result
+                                } catch (err) {
+                                    if (!instanceCacheMap.has(instance))
+                                        throw new CancelledCache()
+                                    throw err
+                                }
+                                if (!instanceCacheMap.has(instance))
+                                    throw new CancelledCache()
+                                return val
+                            })()
+                            return cancelWrapper
+                        }
+                    }
+
                     if (context.kind === 'method') {
                         const ownMethod: any = function (
                             this: any,
                             ...args: any[]
                         ) {
-                            return wrapped.apply(this, args)
+                            return callWrapped(...args)
                         }
                         ownMethod.clearCache = clearCache
                         ownMethod.feedCache = feedCache
@@ -192,7 +217,7 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                         const descriptor: PropertyDescriptor = {
                             configurable: true,
                             get: function () {
-                                return wrapped.call(this)
+                                return callWrapped()
                             },
                         }
                         ;(descriptor.get as any).clearCache = clearCache
