@@ -14,6 +14,11 @@ type CacheOptions = {
     key?: (...args: any[]) => any
 }
 
+export type CacheDecoratedMethod<F extends (...args: any[]) => any> = F & {
+    clearCache(): void
+    feedCache(args: Parameters<F>, value: any): void
+}
+
 
 // exceptions
 
@@ -38,14 +43,40 @@ const KEY = Symbol.for('@0k/cache/config')
 
 globalThis[KEY] ||= [] as Function[]
 
+function getUnwrapFns () {
+    return globalThis[KEY] as Function[]
+}
+
+export function unwrapObject<T> (obj: T): T {
+    let current = obj
+    let changed = true
+    while (changed) {
+        let unwrapped: any = current
+        for (const unwrapFn of getUnwrapFns()) {
+            unwrapped = unwrapFn(unwrapped)
+        }
+        changed = !Object.is(unwrapped, current)
+        current = unwrapped
+    }
+    return current
+}
+
 const allCaches = new WeakMap<any, Set<WeakMap<any, any>>>()
 
 export function cacheFactory (defaultOpts?: CacheOptions) {
-    const unwrapFns = globalThis[KEY] as Function[]
     defaultOpts = {
         key: (x: any) => x,
         ...defaultOpts,
     }
+    // Overloads:
+    // 1. @cache — bare decorator on a method/getter
+    function cache<F extends (...args: any[]) => any>(
+        target: F, context: ClassMethodDecoratorContext | ClassGetterDecoratorContext,
+    ): CacheDecoratedMethod<F>
+    // 2. cache({...}) — factory with options, returns a decorator
+    function cache(opts: CacheOptions & Record<string, any>): typeof cache
+    // 3. cache() — factory without options, returns a decorator
+    function cache(): typeof cache
     function cache (...args: any[]) {
         if (
             args.length === 2 &&
@@ -53,7 +84,7 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
             typeof args[1] === 'object' &&
             'kind' in args[1]
         ) {
-            return cache()(...args)
+            return (cache as any)()(...args)
         }
         if (args.length === 1 && typeof args[0] === 'object') {
             return cacheFactory({ ...defaultOpts, ...args[0] })
@@ -95,7 +126,9 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
         } else {
             CacheStore = DefaultCacheStore
         }
-        return function (target: any, context: any) {
+        return function <F extends (...args: any[]) => any>(
+            target: F, context: any,
+        ): CacheDecoratedMethod<F> {
             if (arguments.length === 3) {
                 throw new Error(
                     'Receiving OLD decorator prototype for' +
@@ -111,16 +144,7 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
 
             const wrapped: any = function (this: any, ...args: any[]) {
                 let instanceCache
-                let instance = this
-                let changed = true
-                while (changed) {
-                    let unwrapped = instance
-                    for (const unwrapFn of unwrapFns) {
-                        unwrapped = unwrapFn(unwrapped)
-                    }
-                    changed = !Object.is(unwrapped, instance)
-                    instance = unwrapped
-                }
+                let instance = unwrapObject(this)
                 instanceCache = instanceCacheMap.get(instance)
                 if (!instanceCache) {
                     instanceCache = new CacheStore(opts)
@@ -232,16 +256,7 @@ export function cacheFactory (defaultOpts?: CacheOptions) {
                     if (!Object.hasOwnProperty.call(instance, 'clearCaches')) {
                         instance.clearCaches = function () {
                             if (!methodCaches) return
-                            let inst = this
-                            let changed = true
-                            while (changed) {
-                                let unwrapped = inst
-                                for (const unwrapFn of unwrapFns) {
-                                    unwrapped = unwrapFn(unwrapped)
-                                }
-                                changed = !Object.is(unwrapped, inst)
-                                inst = unwrapped
-                            }
+                            const inst = unwrapObject(this)
                             for (const map of methodCaches) {
                                 map.delete(inst)
                             }
@@ -425,7 +440,7 @@ export class TimeoutJsonKeyTTLCacheStore extends Map implements CacheStore {
 export const JsonKeyTTLCacheStore = TimeoutJsonKeyTTLCacheStore
 
 export function addUnwrapFn (unwrapFn: Function) {
-    globalThis[KEY].push(unwrapFn)
+    getUnwrapFns().push(unwrapFn)
 }
 
 

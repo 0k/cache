@@ -6,6 +6,7 @@ import {
     CacheError,
     CancelledCache,
     addUnwrapFn,
+    unwrapObject,
 } from './cache'
 
 export {
@@ -16,4 +17,5 @@ export {
     CacheError,
     CancelledCache,
     addUnwrapFn,
+    unwrapObject,
 }
